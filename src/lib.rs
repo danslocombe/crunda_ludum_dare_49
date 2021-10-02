@@ -29,7 +29,8 @@ impl World {
             let amp = (i % levels) as f32 / levels as f32;
             oscs.push(Oscillator {
                 pos : i as f32 / (osc_count as f32),
-                rate : (3.141 * 2.) / 120.,
+                //rate : (3.141 * 2.) / ((1. + amp) * 120.),
+                rate : (3.141 * 2.) / (120.),
                 amp,
                 t_off : (i * 100) as u32,
             });
@@ -56,12 +57,16 @@ fn angle_diff(x : f32, y : f32) -> f32 {
 }
 
 fn min_dist(x : f32, y : f32) -> f32 {
-    //let dist = (osc.pos - pos).abs().min((pos - osc.pos).abs());
-    //(x - y).abs().min((1. + y - x).abs())
-
     angle_diff(x, y).abs()
+}
 
-    //0.5
+fn distance_weight(dist : f32, k : f32) -> f32 {
+    //const K : f32 = 4.;
+    1. / (1. + k*dist)
+}
+
+fn distance_weight_log(dist: f32, k: f32) -> f32 {
+    1. + (1. - k * dist).ln()
 }
 
 impl World {
@@ -72,10 +77,28 @@ impl World {
         let mut res = 0.;
         for osc in &self.oscs {
             let dist = min_dist(osc.pos, pos);
-            res += (1. / (1. + dist)) * osc.sample(t);
+            // Hack
+            let tt = (t as f32).ln() + 1200.0;
+            //let k = t as f32 / 800.;
+            let k = tt / 800.;
+            let weighting = distance_weight_log(dist, k);
+
+            if (weighting.is_finite() && !weighting.is_nan() && weighting > 0.0)
+            {
+                res += distance_weight_log(dist, k) * osc.sample(t);
+            }
         }
 
         res
+    }
+
+    pub fn add_weight(&mut self, delta_weight : f32, pos : f32) {
+        for osc in &mut self.oscs {
+            let dist = min_dist(osc.pos, pos);
+            let delta = delta_weight * distance_weight_log(dist, 4.);
+            //osc.amp = (osc.amp + delta).clamp(0.0, 1.0);
+            osc.rate = (osc.rate + delta).clamp(0.0001, 1.0);
+        }
     }
 }
 
@@ -118,5 +141,15 @@ pub extern "C" fn sample(world_id: f64, pos : f64, t : f64) -> f64 {
     unsafe {
         let world = &GLOBAL_STATE.as_ref().unwrap().worlds[world_id as usize];
         world.sample(t as u32, pos as f32) as f64
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn add_weight(world_id: f64, pos : f64, mag : f64) -> f64 {
+    unsafe {
+        let world = &mut GLOBAL_STATE.as_mut().unwrap().worlds[world_id as usize];
+        world.add_weight(mag as f32, pos as f32);
+
+        0.0
     }
 }
