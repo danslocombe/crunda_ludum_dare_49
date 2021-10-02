@@ -1,4 +1,6 @@
 use rand::Rng;
+use std::os::raw::c_char;
+use std::ffi::{CStr, CString};
 
 struct GlobalState
 {
@@ -95,9 +97,13 @@ impl World {
     pub fn add_weight(&mut self, delta_weight : f32, pos : f32) {
         for osc in &mut self.oscs {
             let dist = min_dist(osc.pos, pos);
-            let delta = delta_weight * distance_weight_log(dist, 4.);
-            //osc.amp = (osc.amp + delta).clamp(0.0, 1.0);
-            osc.rate = (osc.rate + delta).clamp(0.0001, 1.0);
+            let dist_weighting = distance_weight_log(dist, 4.);
+            if (dist_weighting > 0.)
+            {
+                let delta = delta_weight * dist_weighting;
+                //osc.amp = (osc.amp + delta).clamp(0.0, 1.0);
+                osc.rate = (osc.rate + delta).clamp(0.0001, 1.0);
+            }
         }
     }
 }
@@ -131,7 +137,7 @@ pub extern "C" fn reset() -> f64 {
 pub extern "C" fn add_world() -> f64 {
     unsafe {
         let id = GLOBAL_STATE.as_ref().unwrap().worlds.len();
-        GLOBAL_STATE.as_mut().unwrap().worlds.push(World::new(32));
+        GLOBAL_STATE.as_mut().unwrap().worlds.push(World::new(8));
         id as f64
     }
 }
@@ -151,5 +157,27 @@ pub extern "C" fn add_weight(world_id: f64, pos : f64, mag : f64) -> f64 {
         world.add_weight(mag as f32, pos as f32);
 
         0.0
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn osc_count(world_id: f64) -> f64 {
+    unsafe {
+        let world = &GLOBAL_STATE.as_ref().unwrap().worlds[world_id as usize];
+        world.oscs.len() as f64
+    }
+}
+
+static mut LAST_DEBUG_STRING : Option<CString> = None;
+
+#[no_mangle]
+pub extern "C" fn osc_debug(world_id: f64, osc_id : f64) -> *const c_char {
+    unsafe {
+        let world = &GLOBAL_STATE.as_ref().unwrap().worlds[world_id as usize];
+        let osc = &world.oscs[osc_id as usize];
+
+        let c_str = CString::new(format!("pos: {}, rate: {} amp: {}", osc.pos, osc.rate, osc.amp)).unwrap();
+        LAST_DEBUG_STRING = Some(c_str);
+        LAST_DEBUG_STRING.as_ref().unwrap().as_ptr()
     }
 }
