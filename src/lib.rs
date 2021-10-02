@@ -1,6 +1,6 @@
 use rand::Rng;
 use std::os::raw::c_char;
-use std::ffi::{CStr, CString};
+use std::ffi::{CString};
 
 struct GlobalState
 {
@@ -21,6 +21,10 @@ struct World
     oscs: Vec<Oscillator>,
 }
 
+const BASE_RATE : f32 = (3.141 * 2.) / (120.);
+const MIN_RATE : f32 = BASE_RATE * 0.50;
+const MAX_RATE : f32 = BASE_RATE * 2.25;
+
 impl World {
     fn new(osc_count : usize) -> Self {
         let mut oscs = Vec::with_capacity(osc_count);
@@ -28,18 +32,24 @@ impl World {
         let levels = 4;
 
         for i in 0..osc_count {
-            let amp = (i % levels) as f32 / levels as f32;
+            let amp = ((i % levels) + 1) as f32 / (4.*(levels as f32));
             oscs.push(Oscillator {
                 pos : i as f32 / (osc_count as f32),
                 //rate : (3.141 * 2.) / ((1. + amp) * 120.),
-                rate : (3.141 * 2.) / (120.),
+                rate : BASE_RATE,
                 amp,
-                t_off : (i * 100) as u32,
+                t : (i * 100) as f32,
             });
         }
 
         World {
             oscs,
+        }
+    }
+
+    fn tick(&mut self) {
+        for osc in &mut self.oscs {
+            osc.tick();
         }
     }
 }
@@ -73,21 +83,24 @@ fn distance_weight_log(dist: f32, k: f32) -> f32 {
 
 impl World {
     // Gives result in [-1, 1]
-    pub fn sample(&self, t : u32, pos : f32) -> f32 {
+    pub fn sample(&self, pos : f32) -> f32 {
         // For now sample all using some simple decay func
 
         let mut res = 0.;
         for osc in &self.oscs {
             let dist = min_dist(osc.pos, pos);
             // Hack
-            let tt = (t as f32).ln() + 1200.0;
+            //let tt = (osc.t as f32).ln() + 1200.0;
             //let k = t as f32 / 800.;
-            let k = tt / 800.;
-            let weighting = distance_weight_log(dist, k);
+            //let k = tt / 800.;
+            //let weighting = distance_weight_log(dist, k);
+            let k = 50.;
+            let weighting = 1.0 / (1.0 + k*dist);
 
             if (weighting.is_finite() && !weighting.is_nan() && weighting > 0.0)
             {
-                res += distance_weight_log(dist, k) * osc.sample(t);
+                //res += distance_weight_log(dist, k) * osc.sample();
+                res += weighting * osc.sample();
             }
         }
 
@@ -97,12 +110,14 @@ impl World {
     pub fn add_weight(&mut self, delta_weight : f32, pos : f32) {
         for osc in &mut self.oscs {
             let dist = min_dist(osc.pos, pos);
-            let dist_weighting = distance_weight_log(dist, 4.);
-            if (dist_weighting > 0.)
+            //let dist_weighting = distance_weight_log(dist, 4.);
+            let k = 100.;
+            let distance_weighting = (k*dist).sin()/(k*dist);
+            //if (dist_weighting > 0.)
             {
-                let delta = delta_weight * dist_weighting;
-                //osc.amp = (osc.amp + delta).clamp(0.0, 1.0);
-                osc.rate = (osc.rate + delta).clamp(0.0001, 1.0);
+                let delta = delta_weight * distance_weighting;
+                osc.amp = (osc.amp + delta).clamp(0.0, 1.0);
+                osc.rate = (osc.rate + 1.* delta).clamp(MIN_RATE, BASE_RATE);
             }
         }
     }
@@ -110,7 +125,7 @@ impl World {
 
 struct Oscillator
 {
-    t_off : u32,
+    t : f32,
     pos : f32,
     rate : f32,
     amp : f32,
@@ -118,8 +133,12 @@ struct Oscillator
 
 impl Oscillator {
     // Gives result in [-1, 1]
-    pub fn sample(&self, t : u32) -> f32 {
-        self.amp * ((t + self.t_off) as f32 * self.rate).sin()
+    pub fn sample(&self) -> f32 {
+        self.amp * (self.t).sin()
+    }
+
+    pub fn tick(&mut self) {
+        self.t += self.rate;
     }
 }
 
@@ -134,19 +153,37 @@ pub extern "C" fn reset() -> f64 {
 }
 
 #[no_mangle]
-pub extern "C" fn add_world() -> f64 {
+pub extern "C" fn add_world(generators : f64) -> f64 {
     unsafe {
         let id = GLOBAL_STATE.as_ref().unwrap().worlds.len();
-        GLOBAL_STATE.as_mut().unwrap().worlds.push(World::new(8));
+        GLOBAL_STATE.as_mut().unwrap().worlds.push(World::new(generators as usize));
         id as f64
     }
 }
 
 #[no_mangle]
-pub extern "C" fn sample(world_id: f64, pos : f64, t : f64) -> f64 {
+pub extern "C" fn sample(world_id: f64, pos : f64) -> f64 {
     unsafe {
         let world = &GLOBAL_STATE.as_ref().unwrap().worlds[world_id as usize];
-        world.sample(t as u32, pos as f32) as f64
+        world.sample(pos as f32) as f64
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn sample_osc(world_id: f64, osc : f64) -> f64 {
+    unsafe {
+        let world = &GLOBAL_STATE.as_ref().unwrap().worlds[world_id as usize];
+        let osc = &world.oscs[osc as usize];
+        osc.sample() as f64
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn get_amp(world_id: f64, osc : f64) -> f64 {
+    unsafe {
+        let world = &GLOBAL_STATE.as_ref().unwrap().worlds[world_id as usize];
+        let osc = &world.oscs[osc as usize];
+        osc.amp as f64
     }
 }
 
@@ -155,6 +192,19 @@ pub extern "C" fn add_weight(world_id: f64, pos : f64, mag : f64) -> f64 {
     unsafe {
         let world = &mut GLOBAL_STATE.as_mut().unwrap().worlds[world_id as usize];
         world.add_weight(mag as f32, pos as f32);
+
+        0.0
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn tick() -> f64 {
+    unsafe {
+        let state = &mut GLOBAL_STATE.as_mut().unwrap();
+        for world in &mut state.worlds
+        {
+            world.tick();
+        }
 
         0.0
     }
