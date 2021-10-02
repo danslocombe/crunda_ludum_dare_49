@@ -21,7 +21,9 @@ struct World
     oscs: Vec<Oscillator>,
 }
 
-const BASE_RATE : f32 = (3.141 * 2.) / (120.);
+const TAU : f32 = 3.141 * 2.;
+
+const BASE_RATE : f32 = TAU / (120.);
 const MIN_RATE : f32 = BASE_RATE * 0.50;
 const MAX_RATE : f32 = BASE_RATE * 2.25;
 
@@ -116,8 +118,23 @@ impl World {
             //if (dist_weighting > 0.)
             {
                 let delta = delta_weight * distance_weighting;
-                osc.amp = (osc.amp + delta).clamp(0.0, 1.0);
-                osc.rate = (osc.rate + 1.* delta).clamp(MIN_RATE, BASE_RATE);
+                osc.update_amp(delta);
+                osc.update_rate(1. * delta);
+            }
+        }
+    }
+
+    pub fn slam(&mut self, force : f32, pos : f32) {
+        for osc in &mut self.oscs {
+            let dist = min_dist(osc.pos, pos);
+            if (dist < 0.125)
+            {
+                //let k = 500.;
+                //let weighting = 1.0 / (1.0 + k*dist);
+                let weighting = 1.0 - 20.0*dist;
+                if (weighting > 0.0) {
+                    osc.slam(force * weighting);
+                }
             }
         }
     }
@@ -139,6 +156,55 @@ impl Oscillator {
 
     pub fn tick(&mut self) {
         self.t += self.rate;
+    }
+
+    pub fn update_amp(&mut self, delta : f32) {
+        self.amp = (self.amp + delta).clamp(0.0, 1.0);
+    }
+
+    pub fn update_rate(&mut self, delta : f32) {
+        self.rate = (self.rate + 1.* delta).clamp(MIN_RATE, BASE_RATE);
+    }
+
+    pub fn slam(&mut self, force : f32) {
+
+        self.update_amp(force);
+        self.update_rate(-force);
+
+        let move_val = force * 1.0;
+
+        // Find next trough
+        // Move towards
+
+        println!("Sample before {}", self.sample());
+
+        let a = (self.t / TAU).floor();
+        let b = self.t - TAU*a;
+
+        let b_target = if (b < 0.25 * TAU) {
+            // Go backwards
+            -0.25 * TAU
+        }
+        else if (b > 0.75 * TAU) {
+            // Go backwards
+            0.75 * TAU
+        }
+        else {
+            // Go forwards
+            0.75 * TAU
+        };
+
+        let mut delta = (b_target - b);
+
+        if (delta.abs() > move_val)
+        {
+            delta = delta.signum() * move_val;
+        }
+
+        self.t += delta;
+
+        println!("Moving delta={}", delta);
+        println!("Sample after {}", self.sample());
     }
 }
 
@@ -192,6 +258,16 @@ pub extern "C" fn add_weight(world_id: f64, pos : f64, mag : f64) -> f64 {
     unsafe {
         let world = &mut GLOBAL_STATE.as_mut().unwrap().worlds[world_id as usize];
         world.add_weight(mag as f32, pos as f32);
+
+        0.0
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn slam(world_id: f64, pos : f64, force : f64) -> f64 {
+    unsafe {
+        let world = &mut GLOBAL_STATE.as_mut().unwrap().worlds[world_id as usize];
+        world.slam(force as f32, pos as f32);
 
         0.0
     }
