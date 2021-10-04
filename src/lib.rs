@@ -28,19 +28,19 @@ const MIN_RATE : f32 = BASE_RATE * 0.50;
 const MAX_RATE : f32 = BASE_RATE * 2.25;
 
 impl World {
-    fn new(osc_count : usize) -> Self {
+    fn new(seed : usize, osc_count : usize) -> Self {
         let mut oscs = Vec::with_capacity(osc_count);
 
         let levels = 4;
 
         for i in 0..osc_count {
-            let amp = ((i % levels) + 1) as f32 / (4.*(levels as f32));
+            let amp = (((i + seed) % levels) + 1) as f32 / (4.*(levels as f32));
             oscs.push(Oscillator {
                 pos : i as f32 / (osc_count as f32),
                 //rate : (3.141 * 2.) / ((1. + amp) * 120.),
                 rate : BASE_RATE,
                 amp,
-                t : (i * 100) as f32,
+                t : (seed * 1235 + i * 100) as f32,
             });
         }
 
@@ -176,7 +176,7 @@ impl Oscillator {
         // Find next trough
         // Move towards
 
-        println!("Sample before {}", self.sample());
+        //println!("Sample before {}", self.sample());
 
         let a = (self.t / TAU).floor();
         let b = self.t - TAU*a;
@@ -203,8 +203,8 @@ impl Oscillator {
 
         self.t += delta;
 
-        println!("Moving delta={}", delta);
-        println!("Sample after {}", self.sample());
+        ////println!("Moving delta={}", delta);
+        ////println!("Sample after {}", self.sample());
     }
 }
 
@@ -222,7 +222,7 @@ pub extern "C" fn reset() -> f64 {
 pub extern "C" fn add_world(generators : f64) -> f64 {
     unsafe {
         let id = GLOBAL_STATE.as_ref().unwrap().worlds.len();
-        GLOBAL_STATE.as_mut().unwrap().worlds.push(World::new(generators as usize));
+        GLOBAL_STATE.as_mut().unwrap().worlds.push(World::new(id, generators as usize));
         id as f64
     }
 }
