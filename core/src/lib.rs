@@ -1,3 +1,4 @@
+// A World is made up of a collection of oscillators equally spaced in a circle.
 pub struct World
 {
     pub oscs: Vec<Oscillator>,
@@ -5,9 +6,8 @@ pub struct World
 
 const TAU : f32 = 3.141 * 2.;
 
-const BASE_RATE : f32 = TAU / (120.);
+const BASE_RATE : f32 = TAU / 120.;
 const MIN_RATE : f32 = BASE_RATE * 0.50;
-const MAX_RATE : f32 = BASE_RATE * 2.25;
 
 impl World {
     pub fn new(seed : usize, osc_count : usize) -> Self {
@@ -16,10 +16,11 @@ impl World {
         let levels = 4;
 
         for i in 0..osc_count {
+            // In the compo game we don't really vary the frequency of the osciallators and setup the amplitudes
+            // to a regular pattern.
             let amp = (((i + seed) % levels) + 1) as f32 / (4.*(levels as f32));
             oscs.push(Oscillator {
                 pos : i as f32 / (osc_count as f32),
-                //rate : (3.141 * 2.) / ((1. + amp) * 120.),
                 rate : BASE_RATE,
                 amp,
                 t : (seed * 1235 + i * 100) as f32,
@@ -38,6 +39,7 @@ impl World {
     }
 }
 
+// The smallest difference between two angles represented as numbers in [0-1)
 fn angle_diff(x : f32, y : f32) -> f32 {
     let diff = y - x;
 
@@ -57,7 +59,6 @@ fn min_dist(x : f32, y : f32) -> f32 {
 }
 
 fn distance_weight(dist : f32, k : f32) -> f32 {
-    //const K : f32 = 4.;
     1. / (1. + k*dist)
 }
 
@@ -66,24 +67,21 @@ fn distance_weight_log(dist: f32, k: f32) -> f32 {
 }
 
 impl World {
+    // Sample the surface level of a world at a given "world position" or angle represented as a number in [0,1)
+    // The actual radius is then rendered as r_pos = r0 + r_vary * sample(pos)
+    //
     // Gives result in [-1, 1]
     pub fn sample(&self, pos : f32) -> f32 {
-        // For now sample all using some simple decay func
 
+        // For now sample all oscilators using some simple weighting func
         let mut res = 0.;
         for osc in &self.oscs {
             let dist = min_dist(osc.pos, pos);
-            // Hack
-            //let tt = (osc.t as f32).ln() + 1200.0;
-            //let k = t as f32 / 800.;
-            //let k = tt / 800.;
-            //let weighting = distance_weight_log(dist, k);
             let k = 50.;
             let weighting = 1.0 / (1.0 + k*dist);
 
-            if (weighting.is_finite() && !weighting.is_nan() && weighting > 0.0)
+            if weighting > 0.0
             {
-                //res += distance_weight_log(dist, k) * osc.sample();
                 res += weighting * osc.sample();
             }
         }
@@ -91,13 +89,13 @@ impl World {
         res
     }
 
+    // Add weight to the osciallators near a point
+    // Used for debugging but not in final entry 
     pub fn add_weight(&mut self, delta_weight : f32, pos : f32) {
         for osc in &mut self.oscs {
             let dist = min_dist(osc.pos, pos);
-            //let dist_weighting = distance_weight_log(dist, 4.);
             let k = 100.;
             let distance_weighting = (k*dist).sin()/(k*dist);
-            //if (dist_weighting > 0.)
             {
                 let delta = delta_weight * distance_weighting;
                 osc.update_amp(delta);
@@ -106,15 +104,15 @@ impl World {
         }
     }
 
+    // Simulate an object slamming into the surface
+    // Basically we change the value of t of all oscillators close to the impact position.
     pub fn slam(&mut self, force : f32, pos : f32) {
         for osc in &mut self.oscs {
             let dist = min_dist(osc.pos, pos);
-            if (dist < 0.125)
+            if dist < 0.125
             {
-                //let k = 500.;
-                //let weighting = 1.0 / (1.0 + k*dist);
                 let weighting = 1.0 - 20.0*dist;
-                if (weighting > 0.0) {
+                if weighting > 0.0 {
                     osc.slam(force * weighting);
                 }
             }
@@ -155,37 +153,57 @@ impl Oscillator {
 
         let move_val = force * 1.0;
 
-        // Find next trough
-        // Move towards
+        // If you imagine the oscillator tracing a sine wave, we want to
+        // "move" the current time of the oscillator towards a trough (-1)
+        //
+        //                    _ _
+        //  |               /     \
+        //  |\            /         \
+        //  |  |         |           |
+        //  -----------------------------------------------
+        //  |  |         |
+        //  |    \ _ _ /
+        //  |
+        //          |
+        //          target
+        //
 
-        //println!("Sample before {}", self.sample());
-
+        // We start by finding the current cycle number we are on and isolating focusing just on that
         let a = (self.t / TAU).floor();
         let b = self.t - TAU*a;
 
-        let b_target = if (b < 0.25 * TAU) {
-            // Go backwards
+        // b is the local position in the current cycle and b_target will be the local minimum
+        // We decide b_target by looking at where we are in the current cycle
+        // We either want target_0 or target_1
+        //
+        //               _ _
+        //          | /     \
+        //          |/       \
+        //          |         |
+        //          ---------------------------------------------
+        //   |      |          |       |
+        //    \_ _ /|           \ _ _ /
+        //      |   |
+        //      |   0              |
+        //      |                  target_1
+        //      target_0
+
+        let b_target = if b < 0.25 * TAU {
             -0.25 * TAU
         }
-        else if (b > 0.75 * TAU) {
-            // Go backwards
-            0.75 * TAU
-        }
         else {
-            // Go forwards
             0.75 * TAU
         };
 
-        let mut delta = (b_target - b);
+        let mut delta = b_target - b;
 
-        if (delta.abs() > move_val)
+        // If the difference between b and b_target is greater than the max move value determined by the force
+        // we cap it.
+        if delta.abs() > move_val
         {
             delta = delta.signum() * move_val;
         }
 
         self.t += delta;
-
-        ////println!("Moving delta={}", delta);
-        ////println!("Sample after {}", self.sample());
     }
 }
