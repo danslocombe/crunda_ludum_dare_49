@@ -176,17 +176,21 @@ impl Oscillator {
         // We decide b_target by looking at where we are in the current cycle
         // We either want target_0 or target_1
         //
-        //               _ _
-        //          | /     \
-        //          |/       \
-        //          |         |
-        //          ---------------------------------------------
-        //   |      |          |       |
-        //    \_ _ /|           \ _ _ /
-        //      |   |
-        //      |   0              |
-        //      |                  target_1
-        //      target_0
+        //              _|_
+        //          | /  |  \
+        //          |/   |   \
+        //          |    |    |
+        //          -----|---------------------------------------
+        //   |      |    |     |       |
+        //    \_ _ /|    |      \ _ _ /
+        //      |   |    |
+        //      |   0    |         |
+        //      |        |         target_1
+        //      target_0 |
+        //               |
+        //               |
+        //     Left of this line we go to target_0
+        //     Right of this line we go to target_1
 
         let b_target = if b < 0.25 * TAU {
             -0.25 * TAU
